@@ -1,0 +1,15 @@
+# Keep the build context small and never ship local/secret files into an
+# image layer.
+.git
+.gitignore
+.github
+.env
+*.env
+!.env.example
+README.md
+Dockerfile
+docker-compose.yaml
+*.md
+*.test
+*.out
+coverage.*
