@@ -1,0 +1,25 @@
+apiVersion: v2
+name: insiderdevops
+description: |
+  Helm chart for the InsiderDevops Go HTTP service (Insider DevOps internship
+  case study, Track B — local minikube + ngrok). Single-service chart:
+  Deployment + ClusterIP Service + nginx Ingress + ConfigMap + Secret, with
+  an optional NetworkPolicy.
+type: application
+
+# version    -> the chart's own version (bump on any chart/template change).
+# appVersion -> the default application/image version this chart ships with.
+#               Overridden per environment via image.tag in values-*.yaml.
+version: 0.1.0
+appVersion: "v0.1.0"
+
+keywords:
+  - go
+  - http
+  - insider
+  - devops-case-study
+home: https://github.com/faygun21/InsiderDevops
+sources:
+  - https://github.com/faygun21/InsiderDevops
+maintainers:
+  - name: faygun21

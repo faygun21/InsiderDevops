@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "insiderdevops.fullname" . }}
+  labels:
+    {{- include "insiderdevops.labels" . | nindent 4 }}
+# Non-secret application configuration. Injected into the container as
+# environment variables via `envFrom` in the Deployment. Edit values under
+# `config:` in values*.yaml — every key becomes an env var.
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

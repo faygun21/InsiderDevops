@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "insiderdevops.fullname" . }}
+  labels:
+    {{- include "insiderdevops.labels" . | nindent 4 }}
+spec:
+  # ClusterIP: the service is reached from outside the cluster via the
+  # Ingress, not directly. Keeps the surface area minimal.
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      # Forward to the named "http" container port (Values.service.targetPort).
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "insiderdevops.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,119 @@
+# Default values for the insiderdevops chart.
+# These defaults target a generic local install. Environment-specific
+# overrides live in ../../values-dev.yaml and ../../values-prod.yaml at the
+# repo root and are applied with `helm ... -f values-<env>.yaml`.
+
+# Number of pod replicas. Overridden per environment.
+replicaCount: 1
+
+image:
+  # Track B (no registry): the image is built locally and side-loaded into
+  # minikube via `minikube image load insiderdevops:dev`. Never prefix a
+  # registry host here — it must resolve from minikube's local Docker daemon.
+  repository: insiderdevops
+  # IfNotPresent so Kubernetes uses the side-loaded local image instead of
+  # trying to pull it from a (non-existent) registry.
+  pullPolicy: IfNotPresent
+  # Default tag. Overridden per environment (dev -> "dev", prod -> "v0.1.0").
+  tag: "dev"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# Non-secret application configuration. Rendered into a ConfigMap and injected
+# into the container as environment variables. The Go service reads PORT from
+# the environment (see main.go).
+config:
+  PORT: "8080"
+  LOG_LEVEL: "info"
+
+# Sensitive values. Rendered base64-encoded into a Secret and injected as
+# environment variables. The value below is a non-functional PLACEHOLDER:
+# override via `--set secret.API_TOKEN=...` or, in production, a
+# sealed-secrets / external-secrets operator. Never commit real secrets.
+secret:
+  API_TOKEN: "changeme-placeholder"
+
+service:
+  type: ClusterIP
+  # Port exposed by the Service.
+  port: 80
+  # Port the Go process listens on inside the container (main.go: PORT=8080).
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  # The class is selected via the legacy annotation (see annotations below)
+  # rather than spec.ingressClassName, per the chart requirements.
+  className: ""
+  annotations:
+    kubernetes.io/ingress.class: nginx
+  host: app.local
+  path: /
+  pathType: Prefix
+  tls: []
+
+# Container resource requests/limits. Overridden per environment. See
+# values-dev.yaml for the rationale behind these numbers.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# Probes hit the Go service's /healthz endpoint on the container port.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  failureThreshold: 3
+# startupProbe gives a slow/cold start up to 10*3s = 30s before liveness
+# kicks in. Cheap insurance; harmless for a fast-starting Go binary.
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  failureThreshold: 10
+  periodSeconds: 3
+
+# The image is distroless `nonroot` (UID 65532) and writes nothing to disk,
+# so we can lock the container down without breaking it.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Bonus (Task 2.5). When enabled, a NetworkPolicy allows inbound traffic to
+# the pods ONLY from the ingress-nginx controller, denies all other ingress,
+# and allows all egress.
+networkPolicy:
+  enabled: true
+  # Label selector identifying the ingress controller pods. minikube's
+  # `ingress` addon labels its controller pods app.kubernetes.io/name=ingress-nginx.
+  ingressControllerSelector:
+    app.kubernetes.io/name: ingress-nginx
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
