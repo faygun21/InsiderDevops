@@ -1,0 +1,47 @@
+# ===========================================================================
+# values-dev.yaml — DEVELOPMENT overrides
+# ===========================================================================
+# Target environment : local minikube (Track B), namespace `dev`.
+# Applied with       : helm upgrade --install insiderdevops ./charts/insiderdevops \
+#                        -f values-dev.yaml --namespace dev --create-namespace
+#
+# Differences vs. chart defaults (charts/insiderdevops/values.yaml):
+#   - image.tag                : "dev"   (matches the locally side-loaded image)
+#   - ingress.host             : app.local
+#   (replicaCount and resources happen to equal the chart defaults, but are
+#    pinned here explicitly so dev stays stable if the chart defaults change.)
+#
+# Difference vs. values-prod.yaml:
+#   replicaCount 1 (vs 2), image.tag "dev" (vs v0.1.0),
+#   smaller resource limits, host app.local (vs app.prod).
+#
+# Resource sizing rationale (Task 2.3):
+#   Low limits for local dev. The service is a single static Go binary on a
+#   distroless base — observing `go run .` / the container at idle and under
+#   light curl load shows RSS well under 20Mi and negligible CPU. 64Mi/50m
+#   requested with 128Mi/100m limits leaves generous headroom while keeping
+#   the pod schedulable on a constrained minikube VM. Prod doubles these to
+#   absorb real traffic with the extra replica.
+#
+# NetworkPolicy restricts inbound traffic to ingress-controller only —
+# safe default for both envs.
+# ===========================================================================
+
+replicaCount: 1
+
+image:
+  tag: "dev"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  host: app.local
+
+networkPolicy:
+  enabled: true

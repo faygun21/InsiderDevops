@@ -1,0 +1,46 @@
+# ===========================================================================
+# values-prod.yaml — PRODUCTION overrides
+# ===========================================================================
+# Target environment : production-shaped install, namespace `prod`.
+#                      (Still runs on local minikube for this case study, but
+#                       sized and configured as a production profile.)
+# Applied with       : helm upgrade --install insiderdevops ./charts/insiderdevops \
+#                        -f values-prod.yaml --namespace prod --create-namespace
+#
+# Differences vs. chart defaults (charts/insiderdevops/values.yaml):
+#   - replicaCount             : 2       (HA: survive one pod failure)
+#   - image.tag                : v0.1.0  (an immutable, released tag — never
+#                                         a moving "dev" tag in production)
+#   - resources.requests.cpu   : 100m    (default 50m)
+#   - resources.requests.memory: 128Mi   (default 64Mi)
+#   - resources.limits.cpu     : 200m    (default 100m)
+#   - resources.limits.memory  : 256Mi   (default 128Mi)
+#   - ingress.host             : app.prod (default app.local)
+#
+# Difference vs. values-dev.yaml:
+#   2 replicas (vs 1), released tag v0.1.0 (vs "dev"), double the resource
+#   requests/limits to absorb real traffic across the extra replica,
+#   host app.prod (vs app.local).
+#
+# NetworkPolicy is kept enabled — inbound is restricted to the ingress
+# controller in production too.
+# ===========================================================================
+
+replicaCount: 2
+
+image:
+  tag: "v0.1.0"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+ingress:
+  host: app.prod
+
+networkPolicy:
+  enabled: true
