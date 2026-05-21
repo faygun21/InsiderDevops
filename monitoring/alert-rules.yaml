@@ -1,0 +1,38 @@
+# ===========================================================================
+# alert-rules.yaml — standalone PrometheusRule (Day 4)
+# ===========================================================================
+# This is the plain, un-templated form of the alert that the Helm chart also
+# ships at charts/insiderdevops/templates/prometheusrule.yaml. Keep it here so
+# the alert can be reviewed/applied on its own, e.g.:
+#
+#   kubectl apply -f monitoring/alert-rules.yaml -n dev
+#
+# It is a Prometheus Operator CRD, so kube-prometheus-stack must be installed
+# first (scripts/setup-monitoring.ps1). The `release: kube-prometheus-stack`
+# label is what the Operator's ruleSelector uses to load it into Prometheus.
+# ===========================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: insiderdevops
+  namespace: dev
+  labels:
+    app.kubernetes.io/name: insiderdevops
+    app.kubernetes.io/part-of: insiderdevops
+    # Required for Operator auto-discovery — must match the kube-prometheus-stack
+    # release name.
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: insiderdevops.rules
+      rules:
+        - alert: HighErrorRate
+          # Fires when the 5xx rate over the last 5 minutes exceeds 0.05 req/s
+          # and stays there for at least 1 minute.
+          expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High 5xx error rate on insiderdevops"
+            description: "5xx error rate is {{ $value | humanize }} req/s (threshold 0.05) in namespace dev."

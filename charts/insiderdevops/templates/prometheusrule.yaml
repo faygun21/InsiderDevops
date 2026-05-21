@@ -1,0 +1,29 @@
+{{- if .Values.prometheusRule.enabled -}}
+# A PrometheusRule is the Operator's CRD form of an alerting rule: version it
+# in the chart and the Operator loads it into Prometheus automatically — no
+# Alertmanager/Prometheus config edit or reload. Gated behind
+# prometheusRule.enabled because the CRD only exists once kube-prometheus-stack
+# is installed.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "insiderdevops.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "insiderdevops.labels" . | nindent 4 }}
+    # Same discovery label the Operator uses for the ServiceMonitor.
+    release: {{ .Values.prometheusRule.releaseLabel | quote }}
+spec:
+  groups:
+    - name: insiderdevops.rules
+      rules:
+        - alert: HighErrorRate
+          # Fraction of 5xx responses per second over the last 5 minutes.
+          expr: rate(http_requests_total{status=~"5.."}[5m]) > {{ .Values.prometheusRule.highErrorRate.threshold }}
+          for: {{ .Values.prometheusRule.highErrorRate.for | quote }}
+          labels:
+            severity: {{ .Values.prometheusRule.highErrorRate.severity | quote }}
+          annotations:
+            summary: "High 5xx error rate on insiderdevops"
+            description: "5xx error rate is {{`{{ $value | humanize }}`}} req/s (threshold {{ .Values.prometheusRule.highErrorRate.threshold }}) in namespace {{ .Release.Namespace }}."
+{{- end }}
