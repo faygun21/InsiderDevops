@@ -1,0 +1,150 @@
+# ---------------------------------------------------------------------------
+# CI pipeline — lint, test, build, vulnerability scan, secret scan, GHCR push.
+#
+# Triggers:
+#   * push to ANY branch          — fast feedback while developing
+#   * pull_request into main/dev  — gate merges
+#   * workflow_dispatch           — run manually from the Actions tab (Task 3.4)
+#
+# Tags are intentionally NOT matched here ('branches' excludes refs/tags/*);
+# tag pushes are handled by release.yaml.
+# ---------------------------------------------------------------------------
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+# Cancel an in-progress run when a newer commit lands on the same ref, so we
+# never spend minutes finishing a build for a commit that is already stale.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege by default; jobs widen this only where they need to.
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1 — static analysis + unit tests with the race detector + coverage.
+  # -------------------------------------------------------------------------
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go (version pinned by go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race needs CGO and a C toolchain; both ship on ubuntu-latest.
+      - name: go test (race + coverage)
+        run: go test ./... -v -race -coverprofile=coverage.out
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Job 2 — build the image, scan it, and only push to GHCR if the scan passes.
+  # Runs after lint-and-test (a green build is meaningless if tests are red).
+  # -------------------------------------------------------------------------
+  build-and-scan:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    permissions:
+      contents: read
+      packages: write   # allow GHCR pushes (GHCR_TOKEN is used below, but this
+                         # keeps the job correct if it ever falls back to
+                         # GITHUB_TOKEN for the registry).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Stamp the image with the short commit SHA. Exposed both as an env var
+      # (consumed by later steps in this job) and as a step output.
+      - name: Compute short SHA
+        id: vars
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          echo "BUILD_SHA=$SHA" >> "$GITHUB_ENV"
+          echo "build_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Building ghcr.io/faygun21/insiderdevops:$SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build but DO NOT push yet — we scan first. `load: true` imports the
+      # image into the runner's Docker daemon so Trivy can read it locally.
+      - name: Build image (load locally, no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ghcr.io/faygun21/insiderdevops:${{ env.BUILD_SHA }}
+          build-args: |
+            BUILD_SHA=${{ env.BUILD_SHA }}
+
+      # Fail the pipeline on any FIXABLE CRITICAL/HIGH vuln. ignore-unfixed
+      # drops noise we cannot act on (no upstream patch exists yet).
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/faygun21/insiderdevops:${{ env.BUILD_SHA }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # Reached only when the scan passed. GHCR_TOKEN is a PAT with
+      # write:packages scope (GITHUB_TOKEN is NOT used for the registry).
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Push image (commit SHA tag)
+        run: docker push ghcr.io/faygun21/insiderdevops:${{ env.BUILD_SHA }}
+
+      # On main, also publish :latest so deploy.yaml / apply-latest.ps1 have a
+      # stable moving tag to fall back on.
+      - name: Tag and push :latest (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag ghcr.io/faygun21/insiderdevops:${{ env.BUILD_SHA }} ghcr.io/faygun21/insiderdevops:latest
+          docker push ghcr.io/faygun21/insiderdevops:latest
+
+  # -------------------------------------------------------------------------
+  # Job 3 — secret scanning. No `needs:` dependency: it is independent of
+  # build/test quality, so it runs in PARALLEL with lint-and-test for the
+  # fastest possible "you committed a secret" feedback.
+  # -------------------------------------------------------------------------
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for a complete scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Default ruleset is fine; no .gitleaks.toml needed. GITHUB_TOKEN
+          # lets the action annotate PRs. (Free for public/personal repos.)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

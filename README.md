@@ -127,6 +127,23 @@ Deploys, forces a bad image tag, watches it fail, then rolls back and prints
 .\scripts\rollout-test.ps1
 ```
 
+### 5. Continuous deployment (Track B limitation)
+
+CI builds and pushes the image to GHCR, but the cluster is a **local minikube**
+that the cloud GitHub runner cannot reach — so it cannot run `helm upgrade` for
+you. Instead, the `deploy.yaml` workflow records the image that should be
+running in [deploy/current-image.txt](deploy/current-image.txt) and commits it
+back to `main`. You then roll it onto the local cluster yourself:
+
+```powershell
+git pull                       # fetch the latest deploy/current-image.txt
+.\scripts\apply-latest.ps1     # helm upgrade --install to namespace dev + rollout status
+```
+
+> The image now lives in GHCR, so the package must be **public** (or an
+> `imagePullSecret` configured) for minikube to pull it. See
+> [CI/CD](#cicd) below for the full pipeline.
+
 ### Ingress host setup (Windows)
 
 The Ingress matches on `Host`, so the hostname must resolve locally and a
@@ -139,6 +156,67 @@ tunnel must be open:
 ```powershell
 curl http://app.local/ping       # {"status":"pong"}
 ```
+
+## CI/CD
+
+Three GitHub Actions workflows live in [.github/workflows/](.github/workflows/).
+Every workflow has a least-privilege `permissions:` block and a `concurrency:`
+group that cancels redundant runs on the same ref. See
+[docs/DAY3.md](docs/DAY3.md) for the design decisions.
+
+### CI — [`ci.yaml`](.github/workflows/ci.yaml)
+
+Runs on **push to any branch**, **PRs into `main`/`dev`**, and **manually**
+(`workflow_dispatch`):
+
+```
+ push / PR / manual
+   │
+   ├── lint-and-test ─────────┐        gitleaks  (parallel — no needs:)
+   │   go vet                 │        secret scan over full history
+   │   go test -race + cover  │
+   │   upload coverage.out    │
+   │                          ▼
+   └───────────────► build-and-scan   (needs: lint-and-test)
+                       docker build (load locally, no push)
+                       Trivy scan ── fixable CRITICAL/HIGH? ──► PIPELINE FAILS
+                       login GHCR (GHCR_TOKEN)
+                       docker push :<short-sha>   (+ :latest on main)
+```
+
+Trivy runs with `ignore-unfixed: true` and `exit-code: 1`, so the build fails
+only on CRITICAL/HIGH vulnerabilities that actually have an upstream fix.
+
+### Release — [`release.yaml`](.github/workflows/release.yaml)
+
+Triggered **only** by a SemVer tag. Builds and pushes `:<tag>` + `:latest` to
+GHCR and publishes a GitHub Release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### Deploy — [`deploy.yaml`](.github/workflows/deploy.yaml)
+
+On push to `main`, records the desired image in `deploy/current-image.txt` and
+commits it back. The actual rollout to the local minikube is done on your
+machine — see [Continuous deployment (Track B limitation)](#5-continuous-deployment-track-b-limitation)
+above and [scripts/apply-latest.ps1](scripts/apply-latest.ps1).
+
+### Image location
+
+```
+ghcr.io/faygun21/insiderdevops:<short-sha>   # every successful build
+ghcr.io/faygun21/insiderdevops:latest        # main + every release
+ghcr.io/faygun21/insiderdevops:v0.1.0        # tagged releases
+```
+
+### Secrets
+
+- `GHCR_TOKEN` — PAT used **only** for `docker login ghcr.io`.
+- `GITHUB_TOKEN` — built in; used for checkout, the GitHub Release, and the
+  deploy commit. No secrets are hardcoded in any workflow.
 
 ## Architecture notes
 

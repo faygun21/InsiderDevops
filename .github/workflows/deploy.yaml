@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# Auto-deploy on merge to main — "poor man's GitOps" for Track B.
+#
+# WHY THIS IS NOT A REAL `kubectl apply`:
+#   The cluster is a local minikube on the developer's laptop. A GitHub-hosted
+#   runner lives in the cloud and has no network path to that cluster, so it
+#   physically cannot run `kubectl apply`/`helm upgrade` against it.
+#
+#   Instead, this workflow records the image that SHOULD be running by writing
+#   deploy/current-image.txt and committing it back to main. The developer then
+#   "pulls" that desired state onto the local cluster with:
+#
+#       git pull
+#       .\scripts\apply-latest.ps1
+#
+#   In a cloud track this same job would instead load a kubeconfig from a
+#   secret and run `helm upgrade` directly — that is why kubectl is installed
+#   below even though it is unused here.
+# ---------------------------------------------------------------------------
+name: Deploy (Track B GitOps)
+
+on:
+  push:
+    branches: [main]
+    # Avoid an infinite loop: the commit this job pushes only touches
+    # deploy/**, so ignoring that path stops it re-triggering itself. The
+    # commit message also carries [skip ci] as a second line of defence.
+    paths-ignore:
+      - 'deploy/**'
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write   # commit deploy/current-image.txt back to main
+
+jobs:
+  record-desired-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: vars
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          echo "BUILD_SHA=$SHA" >> "$GITHUB_ENV"
+
+      # Installed to document deploy intent and keep this workflow one edit away
+      # from a real cloud deploy. On Track B it cannot reach the local minikube,
+      # so it is NOT used to talk to a cluster here.
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Record desired image
+        run: |
+          mkdir -p deploy
+          IMAGE="ghcr.io/faygun21/insiderdevops:${{ env.BUILD_SHA }}"
+          echo "$IMAGE" > deploy/current-image.txt
+          echo "Recorded desired image: $IMAGE"
+
+      - name: Commit & push the pinned image
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/current-image.txt
+          if git diff --staged --quiet; then
+            echo "No image change — nothing to commit."
+          else
+            # [skip ci] keeps this housekeeping commit from starting fresh runs.
+            git commit -m "chore(deploy): pin image to ${{ env.BUILD_SHA }} [skip ci]"
+            git push origin HEAD:main
+          fi
