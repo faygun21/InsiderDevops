@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/faygun21/insiderdevops/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // TestPingHandler issues a GET to /ping and asserts a 200 with a "pong" body
@@ -68,5 +72,30 @@ func TestVersionHandler(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if !strings.Contains(string(body), "abc123") {
 		t.Fatalf("body: want it to contain %q, got %q", "abc123", string(body))
+	}
+}
+
+// TestMetricsHandler scrapes the Prometheus endpoint and asserts the custom
+// http_requests_total series is exposed. A CounterVec emits no lines until at
+// least one label combination is observed, so we record one request first;
+// otherwise the family would be absent from the scrape even though it is
+// registered.
+func TestMetricsHandler(t *testing.T) {
+	metrics.Observe(http.MethodGet, "/ping", http.StatusOK, time.Millisecond)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	promhttp.Handler().ServeHTTP(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status: want %d, got %d", http.StatusOK, res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "http_requests_total") {
+		t.Fatalf("body: want it to contain %q, got %q", "http_requests_total", string(body))
 	}
 }

@@ -1,0 +1,34 @@
+{{- if .Values.serviceMonitor.enabled -}}
+# A ServiceMonitor tells the Prometheus Operator which Service to scrape and
+# how — dynamic discovery, so no Prometheus config edit or restart is needed
+# when the app is (re)deployed. It is gated behind serviceMonitor.enabled
+# because the CRD only exists once kube-prometheus-stack is installed; with the
+# toggle off the chart still installs cleanly on a cluster without the Operator.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "insiderdevops.fullname" . }}
+  # Deployed into the same namespace as the app (the release namespace, e.g.
+  # `dev`); the Operator watches across namespaces.
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "insiderdevops.labels" . | nindent 4 }}
+    # The Operator discovers ServiceMonitors by this label. It must match the
+    # kube-prometheus-stack release name (see scripts/setup-monitoring.ps1).
+    release: {{ .Values.serviceMonitor.releaseLabel | quote }}
+spec:
+  # Restrict discovery to this release's Service in this namespace.
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "insiderdevops.selectorLabels" . | nindent 6 }}
+  endpoints:
+    # `port` is the NAME of the Service port (service.yaml exposes port 80 as
+    # "http"), not the number — robust against the port number changing.
+    - port: http
+      path: {{ .Values.serviceMonitor.path | quote }}
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+      scheme: http
+{{- end }}

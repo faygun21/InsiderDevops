@@ -47,8 +47,10 @@ curl http://localhost:8080/version   # {"version":"dev"}
 | `/ping`    | GET    | `200` `{"status":"pong"}`        |
 | `/healthz` | GET    | `200` `{"status":"healthy"}`     |
 | `/version` | GET    | `200` `{"version":"<BUILD_SHA>"}`|
+| `/metrics` | GET    | `200` Prometheus text format     |
 
-All responses are `Content-Type: application/json`.
+All app responses are `Content-Type: application/json`; `/metrics` returns the
+Prometheus exposition format (see [Observability](#observability-day-4)).
 
 ## Configuration
 
@@ -218,10 +220,86 @@ ghcr.io/faygun21/insiderdevops:v0.1.0        # tagged releases
 - `GITHUB_TOKEN` — built in; used for checkout, the GitHub Release, and the
   deploy commit. No secrets are hardcoded in any workflow.
 
-## Architecture notes
+## Observability (Day 4)
 
-_Placeholder — to be filled on Day 4 (structured JSON logging, observability,
-Kubernetes manifests, and the minikube + ngrok exposure path)._
+The service exposes Prometheus metrics at `GET /metrics`
+([metrics/metrics.go](metrics/metrics.go)): `http_requests_total`
+(by method/path/status), `http_request_duration_seconds` (histogram), plus the
+standard Go runtime and process collectors. The endpoint is mounted **outside**
+the request-logging middleware so scrapes are neither logged nor counted.
+
+### 1. Install Prometheus + Grafana
+
+[kube-prometheus-stack](https://github.com/prometheus-community/helm-charts)
+(Prometheus + Grafana + Alertmanager) installs into the `monitoring` namespace:
+
+```powershell
+.\scripts\setup-monitoring.ps1
+```
+
+The app's chart ships a **ServiceMonitor** and a **PrometheusRule**
+(`charts/insiderdevops/templates/`) labelled `release: kube-prometheus-stack`,
+so the Operator auto-discovers the target and loads the `HighErrorRate` alert —
+no Prometheus restart needed. They are toggleable via `serviceMonitor.enabled`
+and `prometheusRule.enabled` (both default `true`).
+
+### 2. Access Grafana, Prometheus and alerts
+
+```powershell
+# Grafana (user: admin, password set via --set at install time)
+kubectl port-forward svc/kube-prometheus-stack-grafana 3000:80 -n monitoring
+#   -> http://localhost:3000
+
+# Prometheus — Status > Targets (scrape health), Alerts (HighErrorRate)
+kubectl port-forward svc/kube-prometheus-stack-prometheus 9090:9090 -n monitoring
+#   -> http://localhost:9090
+```
+
+Import the dashboard in Grafana: **Dashboards → New → Import → Upload**
+[monitoring/grafana-dashboard.json](monitoring/grafana-dashboard.json), then
+pick the Prometheus datasource. Panels: RPS, p99 latency, 5xx error rate, pod
+restarts.
+
+## Public URL (ngrok)
+
+The Service is `ClusterIP`, so it is published with a port-forward + ngrok
+tunnel ([scripts/expose-service.ps1](scripts/expose-service.ps1)):
+
+```powershell
+.\scripts\expose-service.ps1
+```
+
+The script starts `kubectl port-forward 8080:80` in the background, then runs
+`ngrok http 8080`. Copy the `Forwarding` URL from the ngrok output and verify:
+
+```powershell
+curl https://<random>.ngrok-free.app/ping     # {"status":"pong"}
+```
+
+ngrok is chosen over `minikube tunnel` to avoid admin elevation and hosts-file
+edits on Windows — see [docs/adr/003-why-ngrok.md](docs/adr/003-why-ngrok.md).
+
+## Makefile shortcuts (Track B)
+
+A [Makefile](Makefile) wraps the common Track B commands: `up`, `down`, `load`,
+`deploy`, `monitoring`, `tunnel`, `status`, and `all` (load → deploy →
+monitoring). For example: `make deploy`, `make monitoring`, `make all`.
+
+> **`make` requires GNU Make for Windows.** Install it with
+> `winget install GnuWin32.Make` or `choco install make` (Chocolatey). Without
+> it, run the equivalent `helm`/`kubectl`/script commands directly.
+
+## Operations & security
+
+- **[RUNBOOK.md](RUNBOOK.md)** — restart, logs, rollback, metrics, secret
+  rotation, Grafana access.
+- **[SECURITY.md](SECURITY.md)** — non-root distroless, no secrets in repo,
+  Trivy/gitleaks in CI, NetworkPolicy, secret-management guidance.
+- **[docs/DAY4.md](docs/DAY4.md)** — Day 4 build log and decisions.
+- **[docs/architecture.excalidraw](docs/architecture.excalidraw)** —
+  architecture diagram (open at [excalidraw.com](https://excalidraw.com)).
+- **[docs/adr/](docs/adr/)** — architecture decision records (Helm, distroless,
+  ngrok).
 
 ## AI tools used
 

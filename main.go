@@ -18,6 +18,7 @@ import (
 
 	"github.com/faygun21/insiderdevops/handlers"
 	"github.com/faygun21/insiderdevops/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // buildSHA is the git commit the binary was built from. It is overridden at
@@ -43,14 +44,26 @@ func main() {
 		os.Exit(runHealthcheck(port))
 	}
 
+	// Application routes. These flow through the logging + metrics middleware.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", handlers.Ping)
 	mux.HandleFunc("/healthz", handlers.Healthz)
 	mux.HandleFunc("/version", handlers.Version(buildSHA))
 
+	// Root mux. /metrics is mounted here, OUTSIDE middleware.Logger, so the
+	// Prometheus scrape is never logged as request traffic nor folded back
+	// into the http_* request series (which would inflate cardinality and make
+	// every scrape look like load). Everything else is delegated to the logged
+	// application mux. promhttp.Handler() serves the default registry, which
+	// carries the custom http_* metrics (see package metrics) plus the standard
+	// Go runtime and process collectors.
+	root := http.NewServeMux()
+	root.Handle("/metrics", promhttp.Handler())
+	root.Handle("/", middleware.Logger(mux))
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           middleware.Logger(mux),
+		Handler:           root,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

@@ -114,6 +114,33 @@ networkPolicy:
   ingressControllerSelector:
     app.kubernetes.io/name: ingress-nginx
 
+# ---------------------------------------------------------------------------
+# Observability (Day 4). The ServiceMonitor and PrometheusRule are Prometheus
+# Operator CRDs, so they require kube-prometheus-stack to be installed first
+# (scripts/setup-monitoring.ps1). Each is independently toggleable so the chart
+# still installs cleanly on a cluster that has no Operator/CRDs.
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: true
+  # Must equal the kube-prometheus-stack release name so the Operator's
+  # serviceMonitorSelector discovers this monitor. See setup-monitoring.ps1.
+  releaseLabel: kube-prometheus-stack
+  # Path the Go service exposes Prometheus metrics on (see main.go) and how
+  # often Prometheus scrapes it.
+  path: /metrics
+  interval: 15s
+
+prometheusRule:
+  enabled: true
+  # Same discovery label as the ServiceMonitor.
+  releaseLabel: kube-prometheus-stack
+  # HighErrorRate alert: fraction of 5xx responses, evaluated over 5m. Fires
+  # after the condition holds for `for`. Threshold is a ratio of requests/sec.
+  highErrorRate:
+    threshold: 0.05
+    for: 1m
+    severity: warning
+
 nodeSelector: {}
 tolerations: []
 affinity: {}
