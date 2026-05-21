@@ -1,0 +1,40 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "insiderdevops.fullname" . }}
+  labels:
+    {{- include "insiderdevops.labels" . | nindent 4 }}
+  annotations:
+    # The ingress class is selected via the legacy annotation rather than
+    # spec.ingressClassName, per the chart requirements. minikube's `ingress`
+    # addon installs the nginx controller, which honours this annotation.
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- range . }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "insiderdevops.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}
