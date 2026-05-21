@@ -1,1 +1,1 @@
-ghcr.io/faygun21/insiderdevops:latest
+ghcr.io/faygun21/insiderdevops:1901778
