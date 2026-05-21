@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: builder — compile a static, CGO-free linux/amd64 binary.
 # ---------------------------------------------------------------------------
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # GOPROXY keeps module resolution reproducible; CGO_ENABLED=0 + explicit
 # GOOS/GOARCH produce a fully static binary that runs on a scratch/distroless
