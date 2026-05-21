@@ -1,5 +1,6 @@
-// Package middleware contains net/http middleware. For Day 1 this is just a
-// structured request logger; Day 4 builds richer JSON logging on top of it.
+// Package middleware contains net/http middleware. The request logger emits
+// one structured JSON line per request (Day 1) and, since Day 4, also records
+// each request into the Prometheus instruments declared in package metrics.
 package middleware
 
 import (
@@ -7,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/faygun21/insiderdevops/metrics"
 )
 
 // statusRecorder wraps http.ResponseWriter to capture the status code, which
@@ -43,13 +46,23 @@ func Logger(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 
+		latency := time.Since(start)
+
+		// Record the request for Prometheus. /metrics is served outside this
+		// middleware (see main.go), so it never reaches here — the explicit
+		// skip is belt-and-suspenders against future re-wiring and keeps the
+		// scrape endpoint from inflating its own series.
+		if r.URL.Path != "/metrics" {
+			metrics.Observe(r.Method, r.URL.Path, rec.status, latency)
+		}
+
 		line, err := json.Marshal(requestLog{
 			Level:     "info",
 			Time:      start.UTC().Format(time.RFC3339Nano),
 			Method:    r.Method,
 			Path:      r.URL.Path,
 			Status:    rec.status,
-			LatencyMs: float64(time.Since(start).Microseconds()) / 1000.0,
+			LatencyMs: float64(latency.Microseconds()) / 1000.0,
 		})
 		if err != nil {
 			return
