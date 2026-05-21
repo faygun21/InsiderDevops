@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Release pipeline — runs ONLY on semantic version tags (vMAJOR.MINOR.PATCH).
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# Builds the image, pushes :<tag> and :latest to GHCR, then publishes a
+# GitHub Release pointing at the image.
+# ---------------------------------------------------------------------------
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# A version tag is immutable, so duplicate runs are unlikely. We deliberately
+# do NOT cancel-in-progress: aborting a release halfway could leave a
+# half-published image or a dangling GitHub Release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # softprops/action-gh-release needs this to create a Release
+  packages: write   # GHCR push (GHCR_TOKEN is used below; kept for correctness)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # refs/tags/v0.1.0 -> v0.1.0
+      - name: Extract tag name
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (tag + latest)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/faygun21/insiderdevops:${{ env.TAG }}
+            ghcr.io/faygun21/insiderdevops:latest
+          build-args: |
+            BUILD_SHA=${{ env.TAG }}
+
+      # softprops/action-gh-release is preferred over the archived
+      # actions/create-release: actively maintained and supports v2.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Docker image: `ghcr.io/faygun21/insiderdevops:${{ env.TAG }}`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
